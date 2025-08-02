@@ -4,7 +4,7 @@
 //     g++ -std=c++20 -O3 -march=native -DNDEBUG -Iexternal/chess/include -o minerva minerva.cpp
 // Requirements:
 //   • chess.hpp   — https://github.com/Disservin/chess-library (header‑only)
-//   • A stronger evaluate() can later pipe Stockfish; here we keep a fast material eval.
+//   • Stockfish  — used for evaluation; expected in PATH
 //
 // Usage:
 //   ./minerva "fen_string" [time_ms]
@@ -20,6 +20,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <cstdio>
+#include <cmath>
 
 #include "external/chess/include/chess.hpp"
 
@@ -45,8 +47,25 @@ static int materialRaw(const Board &b) {
 }
 
 static inline int evaluate(const Board &b) {
-    int s = materialRaw(b);
-    return (b.sideToMove() == Color::WHITE) ? s : -s;
+    std::string fen = b.getFen();
+    std::string cmd = "printf \"position fen " + fen + "\\neval\\nquit\\n\" | stockfish";
+    FILE *pipe = popen(cmd.c_str(), "r");
+    int evalCp = materialRaw(b);
+    if (pipe) {
+        char buf[256];
+        while (fgets(buf, sizeof(buf), pipe)) {
+            std::string line(buf);
+            if (line.find("Final evaluation") != std::string::npos) {
+                size_t pos = line.find_first_of("+-");
+                if (pos != std::string::npos) {
+                    evalCp = static_cast<int>(std::round(std::stod(line.substr(pos)) * 100));
+                }
+                break;
+            }
+        }
+        pclose(pipe);
+    }
+    return (b.sideToMove() == Color::WHITE) ? evalCp : -evalCp;
 }
 
 //---------------------------------------------------------------------
