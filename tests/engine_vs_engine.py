@@ -1,7 +1,6 @@
 import subprocess
 import chess
 import chess.pgn
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / 'build' / 'minerva'
