@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <unordered_map>
 #include <mutex>
+#include <utility>
 
 using namespace chess;
 
@@ -260,6 +261,48 @@ int evaluate(const Board& b) {
         }
         br &= br - 1;
     }
+
+    // King safety: penalize missing pawn shield
+    auto king_shield = [&](Color c){
+        Square ksq = b.kingSq(c);
+        int file = ksq.file();
+        int rank = ksq.rank();
+        uint64_t pawns = b.pieces(PieceType::PAWN, c).getBits();
+        int penMg = 0, penEg = 0;
+        int forward = (c == Color::WHITE) ? 1 : -1;
+        for (int df = -1; df <= 1; ++df) {
+            int f = file + df;
+            if (f < 0 || f > 7) {
+                penMg += 15;
+                penEg += 5;
+                continue;
+            }
+            int r1 = rank + forward;
+            int r2 = rank + 2 * forward;
+            bool shield1 = false, shield2 = false;
+            if (r1 >= 0 && r1 < 8) {
+                int sq1 = r1 * 8 + f;
+                shield1 = pawns & (1ULL << sq1);
+            }
+            if (!shield1 && r2 >= 0 && r2 < 8) {
+                int sq2 = r2 * 8 + f;
+                shield2 = pawns & (1ULL << sq2);
+            }
+            if (shield1) continue;
+            if (shield2) {
+                penMg += 8;
+                penEg += 3;
+            } else {
+                penMg += 15;
+                penEg += 5;
+            }
+        }
+        return std::pair<int,int>{penMg, penEg};
+    };
+    auto [wksMg, wksEg] = king_shield(Color::WHITE);
+    mg -= wksMg; eg -= wksEg;
+    auto [bksMg, bksEg] = king_shield(Color::BLACK);
+    mg += bksMg; eg += bksEg;
 
     // Mobility (very simple: count of attacked squares for minor/major pieces)
     auto wOcc = b.us(Color::WHITE).getBits();

@@ -50,7 +50,7 @@ def play_self_game(max_plies=100):
     eng = Engine(ENGINE)
     board = chess.Board()
     moves = []
-    for _ in range(plies):
+    for _ in range(max_plies):
         bm = eng.bestmove(moves, think_ms=50)
         assert bm != '0000'
         move = chess.Move.from_uci(bm)
