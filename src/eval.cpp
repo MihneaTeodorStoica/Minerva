@@ -171,6 +171,82 @@ int evaluate(const Board& b) {
     eg += -8*whiteDoubled +  8*blackDoubled;
     eg += -6*whiteIso     +  6*blackIso;
 
+    // Passed pawns (bonus increases toward promotion)
+    static const int PASS_MG[8] = {0, 5, 10, 20, 35, 60, 100, 0};
+    static const int PASS_EG[8] = {0,10, 20, 40, 60,100,160, 0};
+
+    auto passed_span_white = [&](int sq, int f){
+        uint64_t ahead = (~0ULL) << (sq + 8);
+        uint64_t mask = fileMask(f);
+        if (f>0) mask |= fileMask(f-1);
+        if (f<7) mask |= fileMask(f+1);
+        return ahead & mask;
+    };
+    auto passed_span_black = [&](int sq, int f){
+        uint64_t ahead = (1ULL << sq) - 1ULL;
+        uint64_t mask = fileMask(f);
+        if (f>0) mask |= fileMask(f-1);
+        if (f<7) mask |= fileMask(f+1);
+        return ahead & mask;
+    };
+
+    uint64_t wp = whiteP;
+    while (wp) {
+        int sq = __builtin_ctzll(wp);
+        int f = sq & 7;
+        int r = sq >> 3;
+        if ((blackP & passed_span_white(sq,f)) == 0) {
+            mg += PASS_MG[r];
+            eg += PASS_EG[r];
+        }
+        wp &= wp - 1;
+    }
+    uint64_t bp = blackP;
+    while (bp) {
+        int sq = __builtin_ctzll(bp);
+        int f = sq & 7;
+        int r = 7 - (sq >> 3);
+        if ((whiteP & passed_span_black(sq,f)) == 0) {
+            mg -= PASS_MG[r];
+            eg -= PASS_EG[r];
+        }
+        bp &= bp - 1;
+    }
+
+    // Rook placement: bonus for rooks on open/semi-open files
+    static const int ROOK_OPEN_MG = 15, ROOK_OPEN_EG = 10;
+    static const int ROOK_SEMI_MG = 10, ROOK_SEMI_EG = 5;
+    uint64_t wr = b.pieces(PieceType::ROOK, Color::WHITE).getBits();
+    while (wr) {
+        int sq = __builtin_ctzll(wr);
+        int f = sq & 7;
+        bool wpFile = whiteP & fileMask(f);
+        bool bpFile = blackP & fileMask(f);
+        if (!wpFile && !bpFile) {
+            mg += ROOK_OPEN_MG;
+            eg += ROOK_OPEN_EG;
+        } else if (!wpFile && bpFile) {
+            mg += ROOK_SEMI_MG;
+            eg += ROOK_SEMI_EG;
+        }
+        wr &= wr - 1;
+    }
+    uint64_t br = b.pieces(PieceType::ROOK, Color::BLACK).getBits();
+    while (br) {
+        int sq = __builtin_ctzll(br);
+        int f = sq & 7;
+        bool bpFile = blackP & fileMask(f);
+        bool wpFile = whiteP & fileMask(f);
+        if (!bpFile && !wpFile) {
+            mg -= ROOK_OPEN_MG;
+            eg -= ROOK_OPEN_EG;
+        } else if (!bpFile && wpFile) {
+            mg -= ROOK_SEMI_MG;
+            eg -= ROOK_SEMI_EG;
+        }
+        br &= br - 1;
+    }
+
     // Tempo (small)
     int tempo = (b.sideToMove() == Color::WHITE) ? 8 : -8;
 

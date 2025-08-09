@@ -2,6 +2,8 @@
 #include <iostream>
 #include <sstream>
 #include <chrono>
+#include <vector>
+#include <memory>
 
 using namespace chess;
 
@@ -159,9 +161,29 @@ void UciDriver::cmd_go(const std::string& line) {
 
     // Fire worker
     worker_ = std::thread([this, lim](){
-        auto res = search_.go(board_, lim);
-        // If stopped mid-search, still try to output something reasonable
-        std::string bm = move_to_uci(res.best);
+        std::vector<std::unique_ptr<Search>> searchers;
+        std::vector<SearchResult> results(threads_);
+        searchers.reserve(threads_);
+        for (int i = 0; i < threads_; ++i) {
+            searchers.emplace_back(std::make_unique<Search>());
+            searchers.back()->setStopFlag(&stopFlag_);
+        }
+
+        std::vector<std::thread> ths;
+        for (int i = 0; i < threads_; ++i) {
+            ths.emplace_back([&, i]() {
+                results[i] = searchers[i]->go(board_, lim);
+            });
+        }
+        for (auto& t : ths) t.join();
+
+        SearchResult best = results[0];
+        for (int i = 1; i < threads_; ++i) {
+            if (results[i].bestScore > best.bestScore)
+                best = results[i];
+        }
+
+        std::string bm = move_to_uci(best.best);
         if (bm.empty()) bm = "0000";
         std::cout << "bestmove " << bm << "\n" << std::flush;
         searching_.store(false);
@@ -185,7 +207,21 @@ int UciDriver::loop() {
         } else if (line == "ucinewgame") {
             search_.newGame();
         } else if (line.rfind("setoption",0)==0) {
-            // For future: parse "setoption name Hash value X" and call tt_.resize(X).
+            std::istringstream ss(line);
+            std::string token, name, value;
+            ss >> token; // setoption
+            ss >> token; // name
+            while (ss >> token && token != "value") {
+                if (!name.empty()) name += " ";
+                name += token;
+            }
+            if (token == "value") ss >> value;
+            if (name == "Threads") {
+                int t = 1;
+                try { t = std::stoi(value); } catch (...) { t = 1; }
+                threads_ = std::max(1, t);
+            }
+            // For future: parse other setoption like "Hash".
         } else if (line.rfind("position",0)==0) {
             cmd_position(line);
         } else if (line.rfind("go",0)==0) {

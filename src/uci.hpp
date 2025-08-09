@@ -27,4 +27,5 @@ private:
     std::thread worker_;
     std::atomic<bool> stopFlag_{false};
     std::atomic<bool> searching_{false};
+    int threads_ = 1;
 };
