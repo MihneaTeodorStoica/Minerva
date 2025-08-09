@@ -84,6 +84,7 @@ class UCIEngine:
         self.reader_thread: threading.Thread | None = None
         self.lock = threading.Lock()
         self.running = False
+        self.options: dict[str, T.Any] = {}
 
     # ---- process management
     def _spawn(self) -> None:
@@ -104,11 +105,13 @@ class UCIEngine:
             raise FileNotFoundError(f"Engine not found: {self.exe_path}")
         self._spawn()
         self._handshake()
+        self._apply_options()
 
     def restart(self) -> None:
         self.stop()
         self._spawn()
         self._handshake()
+        self._apply_options()
 
     def stop(self) -> None:
         with self.lock:
@@ -163,6 +166,21 @@ class UCIEngine:
                 self.q.get_nowait()
         except queue.Empty:
             pass
+
+    def set_option(self, name: str, value: T.Any) -> None:
+        self.options[name] = value
+        if self.is_alive():
+            self._send(f"setoption name {name} value {value}")
+            self._send("isready")
+            self._wait_for("readyok", 5.0)
+
+    def _apply_options(self) -> None:
+        for name, value in self.options.items():
+            self._send(f"setoption name {name} value {value}")
+        if self.options:
+            self._send("isready")
+            self._wait_for("readyok", 5.0)
+            self.drain()
 
     # ---- handshake / new game
     def _handshake(self):
@@ -478,6 +496,7 @@ class GameConfig:
     human_vs_engine: bool
     human_white: bool
     think_ms: int
+    threads: int
 
 @dataclass
 class AnnoState:
@@ -505,6 +524,7 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
     human_vs_engine = True
     human_white = True
     think_ms = DEFAULT_THINK_MS
+    threads = max(1, os.cpu_count() or 1)
     while running:
         surface.fill(COL_PANEL_BG)
         draw_text(surface, "Minerva — Friendly Match", (24, 24), 28)
@@ -524,7 +544,9 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
         draw_text(surface, "Black", (r4.x + 10, r4.y + 9))
         y += 60
         draw_text(surface, f"Engine movetime: {think_ms} ms  (Left/Right to adjust)", (bx, y), 20)
-        y += 80
+        y += 40
+        draw_text(surface, f"Engine threads: {threads}  (Up/Down to adjust)", (bx, y), 20)
+        y += 40
         rs = pygame.Rect(bx, y, 200, 44)
         draw_button(surface, rs, "Start", False)
 
@@ -534,13 +556,15 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
                 if ev.key == pygame.K_ESCAPE: return None
                 if ev.key == pygame.K_LEFT:  think_ms = int(max(50, think_ms - 50))
                 if ev.key == pygame.K_RIGHT: think_ms = int(min(5000, think_ms + 50))
+                if ev.key == pygame.K_UP:    threads = int(clamp(threads + 1, 1, 64))
+                if ev.key == pygame.K_DOWN:  threads = int(clamp(threads - 1, 1, 64))
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 mx, my = ev.pos
                 if r1.collidepoint(mx, my): human_vs_engine = True
                 elif r2.collidepoint(mx, my): human_vs_engine = False
                 elif r3.collidepoint(mx, my): human_white = True
                 elif r4.collidepoint(mx, my): human_white = False
-                elif rs.collidepoint(mx, my): return GameConfig(human_vs_engine, human_white, think_ms)
+                elif rs.collidepoint(mx, my): return GameConfig(human_vs_engine, human_white, think_ms, threads)
 
         pygame.display.flip()
         clock.tick(TARGET_FPS)
@@ -826,6 +850,8 @@ def main():
     # Two engine processes always
     eng_w = UCIEngine(ENGINE_EXE, "White")
     eng_b = UCIEngine(ENGINE_EXE, "Black")
+    eng_w.set_option("Threads", cfg.threads)
+    eng_b.set_option("Threads", cfg.threads)
     eng_w.start(); eng_b.start()
 
     try:

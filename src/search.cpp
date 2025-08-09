@@ -187,12 +187,31 @@ SearchResult Search::go(const Board& root, const SearchLimits& lim) {
     int maxDepth = (lim.depth > 0 ? lim.depth : 64);
     Move best = rootMoves.front();
     int  bestScore = -::utils::INF;
+    int  prevScore = 0;
 
     // Iterative deepening
     for (int d = 1; d <= maxDepth; ++d) {
         if (timeUp()) break;
-        Board pos = root; // we’ll search from snapshots at root
-        int score = negamax(pos, d, -::utils::INF, ::utils::INF, 0);
+
+        int alpha = -::utils::INF;
+        int beta  = ::utils::INF;
+        int score = 0;
+        if (d > 1) {
+            int window = 25;
+            alpha = prevScore - window;
+            beta  = prevScore + window;
+            Board pos = root;
+            score = negamax(pos, d, alpha, beta, 0);
+            if (!timeUp() && (score <= alpha || score >= beta)) {
+                alpha = -::utils::INF;
+                beta  = ::utils::INF;
+                pos = root;
+                score = negamax(pos, d, alpha, beta, 0);
+            }
+        } else {
+            Board pos = root;
+            score = negamax(pos, d, alpha, beta, 0);
+        }
         if (timeUp()) break;
 
         // Extract PV from TT
@@ -200,6 +219,7 @@ SearchResult Search::go(const Board& root, const SearchLimits& lim) {
         if (!pv.empty()) best = pv.front();
 
         bestScore = score;
+        prevScore = score;
 
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0_).count();
         // UCI info
