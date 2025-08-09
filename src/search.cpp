@@ -112,6 +112,13 @@ int Search::negamax(Board& b, int depth, int alpha, int beta, int ply) {
 
     bool inCheck = b.inCheck();
 
+    // Futility pruning: if position looks hopeless, cut search early
+    if (!inCheck && depth <= 2) {
+        int stand = eval::evaluate(b);
+        int margin = 125 * depth;
+        if (stand + margin <= alpha) return stand;
+    }
+
     if (depth <= 0) return qsearch(b, alpha, beta, ply);
 
     // Null move pruning

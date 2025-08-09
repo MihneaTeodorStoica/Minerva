@@ -189,7 +189,13 @@ void UciDriver::cmd_go(const std::string& line) {
                 best = results[i];
         }
 
+        Movelist legal; movegen::legalmoves(legal, board_);
+        if (best.best == Move::NO_MOVE && !legal.empty()) {
+            best.best = legal.front();
+        }
+
         std::string bm = move_to_uci(best.best);
+        if (bm.empty() && !legal.empty()) bm = move_to_uci(legal.front());
         if (bm.empty()) bm = "0000";
         std::cout << "bestmove " << bm << "\n" << std::flush;
         searching_.store(false);
