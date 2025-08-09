@@ -42,7 +42,8 @@ if not ENGINE_EXE.exists():
     if alt.exists():
         ENGINE_EXE = alt
 
-START_WINDOW = (760, 760)       # resizable
+# Wider default window so side panel fits
+START_WINDOW = (1000, 760)      # resizable
 BASE_BOARD_MARGIN = 24
 TARGET_FPS = 60
 DEFAULT_THINK_MS = 300
