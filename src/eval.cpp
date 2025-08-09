@@ -1,10 +1,16 @@
 #include "eval.hpp"
 #include "external/chess/include/chess.hpp"
 #include <cstdint>
+#include <unordered_map>
+#include <mutex>
 
 using namespace chess;
 
 namespace {
+
+// Simple cache of evaluation results keyed by board hash
+std::unordered_map<uint64_t, int> eval_cache;
+std::mutex cache_mutex;
 
 // Piece values
 constexpr int V_P = 100, V_N = 320, V_B = 330, V_R = 500, V_Q = 900;
@@ -115,6 +121,14 @@ inline int piece_val(PieceType pt) {
 namespace eval {
 
 int evaluate(const Board& b) {
+    // Check cache first
+    uint64_t key = b.hash();
+    {
+        std::lock_guard<std::mutex> g(cache_mutex);
+        auto it = eval_cache.find(key);
+        if (it != eval_cache.end()) return it->second;
+    }
+
     // Material + PST + bishop pair + simple pawn structure; tapered by game phase.
     int material = 0;
     int mg = 0, eg = 0;
@@ -247,6 +261,30 @@ int evaluate(const Board& b) {
         br &= br - 1;
     }
 
+    // Mobility (very simple: count of attacked squares for minor/major pieces)
+    auto wOcc = b.us(Color::WHITE).getBits();
+    auto bOcc2 = b.us(Color::BLACK).getBits();
+    int mobW = 0, mobB = 0;
+    auto occ = b.occ();
+    uint64_t wKn = b.pieces(PieceType::KNIGHT, Color::WHITE).getBits();
+    while (wKn) { int sq = __builtin_ctzll(wKn); mobW += __builtin_popcountll((attacks::knight(Square(sq)).getBits()) & ~wOcc); wKn &= wKn-1; }
+    uint64_t bKn = b.pieces(PieceType::KNIGHT, Color::BLACK).getBits();
+    while (bKn) { int sq = __builtin_ctzll(bKn); mobB += __builtin_popcountll((attacks::knight(Square(sq)).getBits()) & ~bOcc2); bKn &= bKn-1; }
+    uint64_t wBi = b.pieces(PieceType::BISHOP, Color::WHITE).getBits();
+    while (wBi) { int sq = __builtin_ctzll(wBi); mobW += __builtin_popcountll((attacks::bishop(Square(sq), occ).getBits()) & ~wOcc); wBi &= wBi-1; }
+    uint64_t bBi = b.pieces(PieceType::BISHOP, Color::BLACK).getBits();
+    while (bBi) { int sq = __builtin_ctzll(bBi); mobB += __builtin_popcountll((attacks::bishop(Square(sq), occ).getBits()) & ~bOcc2); bBi &= bBi-1; }
+    uint64_t wRk = b.pieces(PieceType::ROOK, Color::WHITE).getBits();
+    while (wRk) { int sq = __builtin_ctzll(wRk); mobW += __builtin_popcountll((attacks::rook(Square(sq), occ).getBits()) & ~wOcc); wRk &= wRk-1; }
+    uint64_t bRk = b.pieces(PieceType::ROOK, Color::BLACK).getBits();
+    while (bRk) { int sq = __builtin_ctzll(bRk); mobB += __builtin_popcountll((attacks::rook(Square(sq), occ).getBits()) & ~bOcc2); bRk &= bRk-1; }
+    uint64_t wQ = b.pieces(PieceType::QUEEN, Color::WHITE).getBits();
+    while (wQ) { int sq = __builtin_ctzll(wQ); mobW += __builtin_popcountll((attacks::queen(Square(sq), occ).getBits()) & ~wOcc); wQ &= wQ-1; }
+    uint64_t bQ = b.pieces(PieceType::QUEEN, Color::BLACK).getBits();
+    while (bQ) { int sq = __builtin_ctzll(bQ); mobB += __builtin_popcountll((attacks::queen(Square(sq), occ).getBits()) & ~bOcc2); bQ &= bQ-1; }
+    mg += 4 * (mobW - mobB);
+    eg += 2 * (mobW - mobB);
+
     // Tempo (small)
     int tempo = (b.sideToMove() == Color::WHITE) ? 8 : -8;
 
@@ -256,8 +294,18 @@ int evaluate(const Board& b) {
     // Tapered scoring
     int score = (mgScore * phase + egScore * (24 - phase)) / 24;
 
-    // Return from side-to-move perspective
-    return (b.sideToMove() == Color::WHITE) ? score : -score;
+    // Cache and return from side-to-move perspective
+    int finalScore = (b.sideToMove() == Color::WHITE) ? score : -score;
+    {
+        std::lock_guard<std::mutex> g(cache_mutex);
+        eval_cache[key] = finalScore;
+    }
+    return finalScore;
+}
+
+void clear_cache() {
+    std::lock_guard<std::mutex> g(cache_mutex);
+    eval_cache.clear();
 }
 
 } // namespace eval

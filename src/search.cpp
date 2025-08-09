@@ -16,6 +16,7 @@ void Search::newGame() {
     tt_.new_generation();
     history_.clear();
     killers_.clear();
+    eval::clear_cache();
 }
 
 bool Search::timeUp() const {
