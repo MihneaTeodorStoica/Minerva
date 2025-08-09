@@ -12,6 +12,11 @@ UciDriver::UciDriver() {
     searchers_[0]->setStopFlag(&stopFlag_);
 }
 
+UciDriver::~UciDriver() {
+    stopFlag_.store(true);
+    if (worker_.joinable()) worker_.join();
+}
+
 std::string UciDriver::move_to_uci(const Move& m) {
     std::string s;
     auto f = m.from(), t = m.to();
@@ -56,12 +61,10 @@ Move UciDriver::uci_to_move(const Board& b, const std::string& u) {
 }
 
 void UciDriver::cmd_position(const std::string& line) {
-    // cancel search
-    if (searching_.load()) {
-        stopFlag_.store(true);
-        if (worker_.joinable()) worker_.join();
-        searching_.store(false);
-    }
+    // cancel any running search and join worker thread
+    stopFlag_.store(true);
+    if (worker_.joinable()) worker_.join();
+    searching_.store(false);
     auto trim = [](std::string s){
         while(!s.empty() && s.front()==' ') s.erase(s.begin());
         while(!s.empty() && s.back()==' ')  s.pop_back();
@@ -151,11 +154,10 @@ SearchLimits UciDriver::parseLimits(const std::string& line) const {
 }
 
 void UciDriver::cmd_go(const std::string& line) {
-    if (searching_.load()) {
-        stopFlag_.store(true);
-        if (worker_.joinable()) worker_.join();
-        searching_.store(false);
-    }
+    // ensure previous search thread finished
+    stopFlag_.store(true);
+    if (worker_.joinable()) worker_.join();
+    searching_.store(false);
     SearchLimits lim = parseLimits(line);
     stopFlag_.store(false);
     searching_.store(true);
@@ -192,7 +194,6 @@ void UciDriver::cmd_go(const std::string& line) {
         std::cout << "bestmove " << bm << "\n" << std::flush;
         searching_.store(false);
     });
-    worker_.detach();
 }
 
 int UciDriver::loop() {
