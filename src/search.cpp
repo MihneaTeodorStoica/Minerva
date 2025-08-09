@@ -110,16 +110,30 @@ int Search::negamax(Board& b, int depth, int alpha, int beta, int ply) {
         }
     }
 
+    bool inCheck = b.inCheck();
+
     if (depth <= 0) return qsearch(b, alpha, beta, ply);
+
+    // Null move pruning
+    if (!inCheck && depth >= 2) {
+        uint64_t occSide = b.us(b.sideToMove()).getBits();
+        uint64_t pawnsSide = b.pieces(PieceType::PAWN, b.sideToMove()).getBits();
+        if ((occSide ^ pawnsSide) != 0) {
+            b.makeNullMove();
+            int R = 2 + depth / 3;
+            int score = -negamax(b, depth - 1 - R, -beta, -beta + 1, ply + 1);
+            b.unmakeNullMove();
+            if (score >= beta) return score;
+        }
+    }
 
     Movelist ml; movegen::legalmoves(ml, b);
     if (ml.empty()) {
-        if (b.inCheck()) return -::utils::mate_score(ply);
+        if (inCheck) return -::utils::mate_score(ply);
         return 0; // stalemate
     }
 
     // Simple check extension
-    bool inCheck = b.inCheck();
     if (inCheck) depth += 1;
 
     orderMoves(b, ml, ttMove, ply);
