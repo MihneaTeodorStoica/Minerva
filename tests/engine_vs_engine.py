@@ -1,11 +1,12 @@
 import subprocess
 import chess
-from pathlib import Path
+import chess.pgn
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / 'build' / 'minerva'
 if not ENGINE.exists():
     ENGINE = ROOT / 'minerva'
+PGN_OUT = ROOT / 'tests' / 'selfplay.pgn'
 
 class Engine:
     def __init__(self, path: Path):
@@ -33,24 +34,38 @@ class Engine:
         while True:
             line = self.proc.stdout.readline().strip()
             if line.startswith('bestmove'):
-                return line.split()[1]
+                move = line.split()[1]
+                break
+        self._send('isready')
+        self._read_until('readyok')
+        return move
 
     def quit(self):
         self._send('quit')
         self.proc.wait()
 
-def play_self_game(plies=6):
+def play_self_game(max_plies=100):
     eng = Engine(ENGINE)
     board = chess.Board()
-    moves = []
-    for _ in range(plies):
+    moves: list[str] = []
+    for _ in range(max_plies):
         bm = eng.bestmove(moves, think_ms=50)
         assert bm != '0000'
         move = chess.Move.from_uci(bm)
         assert move in board.legal_moves
         board.push(move)
         moves.append(bm)
+        if board.is_game_over():
+            break
     eng.quit()
+
+    game = chess.pgn.Game.from_board(board)
+    game.headers['Event'] = 'Selfplay'
+    game.headers['White'] = 'Minerva'
+    game.headers['Black'] = 'Minerva'
+    game.headers['Result'] = board.result(claim_draw=True)
+    with open(PGN_OUT, 'w', encoding='utf-8') as f:
+        print(game, file=f, end='\n')
     return board
 
 if __name__ == '__main__':

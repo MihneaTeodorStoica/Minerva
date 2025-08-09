@@ -10,6 +10,7 @@
 class UciDriver {
 public:
     UciDriver();
+    ~UciDriver();
 
     int loop(); // returns exit code
 
