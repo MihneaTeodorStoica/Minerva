@@ -228,6 +228,30 @@ int evaluate(const Board& b) {
         bp &= bp - 1;
     }
 
+    // Knight on rim penalty ("A knight on the rim is dim")
+    uint64_t wKnRim = b.pieces(PieceType::KNIGHT, Color::WHITE).getBits();
+    while (wKnRim) {
+        int sq = __builtin_ctzll(wKnRim);
+        int f = sq & 7;
+        int r = sq >> 3;
+        if (f == 0 || f == 7 || r == 0 || r == 7) {
+            mg -= 15;
+            eg -= 10;
+        }
+        wKnRim &= wKnRim - 1;
+    }
+    uint64_t bKnRim = b.pieces(PieceType::KNIGHT, Color::BLACK).getBits();
+    while (bKnRim) {
+        int sq = __builtin_ctzll(bKnRim);
+        int f = sq & 7;
+        int r = sq >> 3;
+        if (f == 0 || f == 7 || r == 0 || r == 7) {
+            mg += 15;
+            eg += 10;
+        }
+        bKnRim &= bKnRim - 1;
+    }
+
     // Rook placement: bonus for rooks on open/semi-open files
     static const int ROOK_OPEN_MG = 15, ROOK_OPEN_EG = 10;
     static const int ROOK_SEMI_MG = 10, ROOK_SEMI_EG = 5;
@@ -261,6 +285,29 @@ int evaluate(const Board& b) {
         }
         br &= br - 1;
     }
+
+    // Connected rooks bonus
+    constexpr int CONNECTED_R_MG = 10;
+    constexpr int CONNECTED_R_EG = 10;
+    auto connected_rooks = [&](Color c){
+        uint64_t r = b.pieces(PieceType::ROOK, c).getBits();
+        if (__builtin_popcountll(r) < 2) return;
+        int sq1 = __builtin_ctzll(r);
+        r &= r - 1;
+        int sq2 = __builtin_ctzll(r);
+        uint64_t occ = b.occ().getBits();
+        if (attacks::rook(Square(sq1), occ).getBits() & (1ULL << sq2)) {
+            if (c == Color::WHITE) {
+                mg += CONNECTED_R_MG;
+                eg += CONNECTED_R_EG;
+            } else {
+                mg -= CONNECTED_R_MG;
+                eg -= CONNECTED_R_EG;
+            }
+        }
+    };
+    connected_rooks(Color::WHITE);
+    connected_rooks(Color::BLACK);
 
     // King safety: penalize missing pawn shield
     auto king_shield = [&](Color c){

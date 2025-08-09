@@ -271,6 +271,27 @@ class UCIEngine:
         self.sync()
         return best, info
 
+
+def parse_score(info: list[str]) -> float | None:
+    """Extract centipawn score from engine info lines (white perspective)."""
+    for line in reversed(info):
+        parts = line.split()
+        if "score" in parts:
+            idx = parts.index("score")
+            if idx + 2 < len(parts):
+                typ = parts[idx + 1]
+                val = parts[idx + 2]
+                try:
+                    if typ == "cp":
+                        return int(val) / 100.0
+                    elif typ == "mate":
+                        # Represent mate as large value
+                        m = int(val)
+                        return 1000.0 if m > 0 else -1000.0
+                except ValueError:
+                    pass
+    return None
+
 # -----------------------------------------------
 # View / rendering helpers
 # -----------------------------------------------
@@ -432,6 +453,51 @@ def draw_board(surface: pygame.Surface, view: View, board: chess.Board, images: 
     for c in circles:
         draw_circle(surface, view, c, COL_CIRCLE, thickness=max(3, s // 14))
 
+
+def draw_side_panel(surface: pygame.Surface, view: View, images_cache: PieceImages,
+                    history: list[str], cap_white: list[str], cap_black: list[str],
+                    eval_cp: float | None):
+    br = view.board_rect()
+    x = br.right + 16
+    y = br.top
+    draw_text(surface, "Moves:", (x, y))
+    y += 24
+    lines: list[str] = []
+    for i in range(0, len(history), 2):
+        w = history[i]
+        b = history[i + 1] if i + 1 < len(history) else ""
+        lines.append(f"{i//2 + 1}. {w} {b}")
+    for line in lines[-15:]:
+        draw_text(surface, line, (x, y))
+        y += 20
+
+    small_size = max(24, view.sq_size() // 2)
+    small_imgs = images_cache.get(small_size)
+
+    y += 10
+    draw_text(surface, "Captured by White:", (x, y))
+    y += 24
+    for i, sym in enumerate(cap_black):
+        key = "b" + sym
+        img = small_imgs.get(key)
+        if img:
+            surface.blit(img, (x + i * (small_size + 2), y))
+    y += small_size + 8
+
+    draw_text(surface, "Captured by Black:", (x, y))
+    y += 24
+    for i, sym in enumerate(cap_white):
+        key = "w" + sym
+        img = small_imgs.get(key)
+        if img:
+            surface.blit(img, (x + i * (small_size + 2), y))
+
+    eval_y = br.bottom - 30
+    if eval_cp is not None:
+        draw_text(surface, f"Eval: {eval_cp:+.2f}", (x, eval_y))
+    else:
+        draw_text(surface, "Eval: --", (x, eval_y))
+
 # -----------------------------------------------
 # Promotion overlay
 # -----------------------------------------------
@@ -583,6 +649,11 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
     selected: int | None = None
     premove: chess.Move | None = None
 
+    move_history: list[str] = []
+    captured_white: list[str] = []  # pieces captured from white
+    captured_black: list[str] = []  # pieces captured from black
+    last_eval: float | None = None
+
     headers = {
         "Event": "Minerva Friendly",
         "Site": "Local",
@@ -602,6 +673,7 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
         if selected is not None:
             legal_targets = [m.to_square for m in board.legal_moves if m.from_square == selected]
         draw_board(surface, view, board, imgs, selected, last_move, legal_targets, anno.arrows, anno.circles)
+        draw_side_panel(surface, view, images_cache, move_history, captured_white, captured_black, last_eval)
         draw_text(surface, f"{'White' if board.turn == chess.WHITE else 'Black'} to move | "
                            f"{'You' if (board.turn == chess.WHITE)==human_white else 'Engine'}",
                   (16, 12))
@@ -611,12 +683,13 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
     redraw()
 
     think_thread: threading.Thread | None = None
-    pending_move: dict[str, str | None] = {"bm": None}
+    pending_move: dict[str, T.Any] = {"bm": None, "eval": None}
 
     def start_engine_think():
         def _run():
-            bm, _ = eng.prepare_and_go(board, think_ms)
+            bm, info = eng.prepare_and_go(board, think_ms)
             pending_move["bm"] = bm
+            pending_move["eval"] = parse_score(info)
         t = threading.Thread(target=_run, daemon=True)
         t.start(); return t
 
@@ -632,8 +705,13 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
 
         if think_thread and not think_thread.is_alive():
             bm = T.cast(str | None, pending_move["bm"])
+            cp = T.cast(float | None, pending_move.get("eval"))
             pending_move["bm"] = None
+            pending_move["eval"] = None
             think_thread = None
+
+            if cp is not None:
+                last_eval = cp if board.turn == chess.WHITE else -cp
 
             mv = normalize_engine_move(board, bm or "")
             ok = mv is not None and (mv in board.legal_moves)
@@ -655,12 +733,36 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
                 mv = first_legal(board)
 
             if mv:
+                san = board.san(mv)
+                if board.is_capture(mv):
+                    cap_sq = mv.to_square
+                    if board.is_en_passant(mv):
+                        cap_sq += -8 if board.turn == chess.WHITE else 8
+                    cap_piece = board.piece_at(cap_sq)
+                    if cap_piece:
+                        if cap_piece.color == chess.WHITE:
+                            captured_white.append(cap_piece.symbol().upper())
+                        else:
+                            captured_black.append(cap_piece.symbol().upper())
                 board.push(mv)
                 last_move = mv
+                move_history.append(san)
                 # premove auto-play if queued and now it's human's turn
                 if premove and (premove in board.legal_moves):
+                    san_p = board.san(premove)
+                    if board.is_capture(premove):
+                        cap_sq = premove.to_square
+                        if board.is_en_passant(premove):
+                            cap_sq += -8 if board.turn == chess.WHITE else 8
+                        cap_piece = board.piece_at(cap_sq)
+                        if cap_piece:
+                            if cap_piece.color == chess.WHITE:
+                                captured_white.append(cap_piece.symbol().upper())
+                            else:
+                                captured_black.append(cap_piece.symbol().upper())
                     board.push(premove)
                     last_move = premove
+                    move_history.append(san_p)
                     premove = None
                 redraw()
             else:
@@ -676,6 +778,7 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
                 elif ev.key == pygame.K_n:
                     board.reset()
                     last_move = None; selected = None; premove = None
+                    move_history.clear(); captured_white.clear(); captured_black.clear(); last_eval = None
                     eng.new_game()
                     redraw()
             elif ev.type == pygame.MOUSEBUTTONDOWN:
@@ -691,7 +794,19 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
                         else:
                             tentative = chess.Move(selected, sq)
                             if tentative in board.legal_moves:
+                                san = board.san(tentative)
+                                if board.is_capture(tentative):
+                                    cap_sq = tentative.to_square
+                                    if board.is_en_passant(tentative):
+                                        cap_sq += -8 if board.turn == chess.WHITE else 8
+                                    cap_piece = board.piece_at(cap_sq)
+                                    if cap_piece:
+                                        if cap_piece.color == chess.WHITE:
+                                            captured_white.append(cap_piece.symbol().upper())
+                                        else:
+                                            captured_black.append(cap_piece.symbol().upper())
                                 board.push(tentative); last_move = tentative
+                                move_history.append(san)
                                 selected = None; premove = None; redraw()
                             else:
                                 piece = board.piece_at(selected); need = False
@@ -704,7 +819,19 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
                                     pt = choose_promotion(surface, view, imgs, board.turn == chess.WHITE, sq)
                                     mv = chess.Move(selected, sq, promotion=pt)
                                     if mv in board.legal_moves:
+                                        san = board.san(mv)
+                                        if board.is_capture(mv):
+                                            cap_sq = mv.to_square
+                                            if board.is_en_passant(mv):
+                                                cap_sq += -8 if board.turn == chess.WHITE else 8
+                                            cap_piece = board.piece_at(cap_sq)
+                                            if cap_piece:
+                                                if cap_piece.color == chess.WHITE:
+                                                    captured_white.append(cap_piece.symbol().upper())
+                                                else:
+                                                    captured_black.append(cap_piece.symbol().upper())
                                         board.push(mv); last_move = mv
+                                        move_history.append(san)
                                     selected = None; premove = None; redraw()
                                 else:
                                     selected = None; redraw()
@@ -755,6 +882,11 @@ def loop_engine_vs_engine(surface: pygame.Surface, eng: UCIEngine, think_ms: int
     anno = AnnoState(set(), set())
     last_move: chess.Move | None = None
 
+    move_history: list[str] = []
+    captured_white: list[str] = []
+    captured_black: list[str] = []
+    last_eval: float | None = None
+
     headers = {
         "Event": "Minerva Friendly",
         "Site": "Local",
@@ -771,6 +903,7 @@ def loop_engine_vs_engine(surface: pygame.Surface, eng: UCIEngine, think_ms: int
         surface.fill((250, 250, 250))
         imgs = images_cache.get(view.sq_size())
         draw_board(surface, view, board, imgs, None, last_move, None, anno.arrows, anno.circles)
+        draw_side_panel(surface, view, images_cache, move_history, captured_white, captured_black, last_eval)
         draw_text(surface, f"{'White' if board.turn == chess.WHITE else 'Black'} to move", (16, 12))
         pygame.display.flip()
 
@@ -787,7 +920,10 @@ def loop_engine_vs_engine(surface: pygame.Surface, eng: UCIEngine, think_ms: int
                 if ev.key == pygame.K_ESCAPE: running = False
                 elif ev.key == pygame.K_f: view.flipped = not view.flipped; redraw()
 
-        bm, _ = eng.prepare_and_go(board, think_ms)
+        bm, info = eng.prepare_and_go(board, think_ms)
+        cp = parse_score(info)
+        if cp is not None:
+            last_eval = cp if board.turn == chess.WHITE else -cp
         mv = normalize_engine_move(board, bm)
 
         ok = mv is not None and (mv in board.legal_moves)
@@ -810,8 +946,20 @@ def loop_engine_vs_engine(surface: pygame.Surface, eng: UCIEngine, think_ms: int
             mv = first_legal(board)
 
         if mv:
+            san = board.san(mv)
+            if board.is_capture(mv):
+                cap_sq = mv.to_square
+                if board.is_en_passant(mv):
+                    cap_sq += -8 if board.turn == chess.WHITE else 8
+                cap_piece = board.piece_at(cap_sq)
+                if cap_piece:
+                    if cap_piece.color == chess.WHITE:
+                        captured_white.append(cap_piece.symbol().upper())
+                    else:
+                        captured_black.append(cap_piece.symbol().upper())
             board.push(mv)
             last_move = mv
+            move_history.append(san)
             redraw()
         else:
             print("Engine failed; no legal fallback. Stopping.")
