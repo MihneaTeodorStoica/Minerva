@@ -204,7 +204,7 @@ int UciDriver::loop() {
     while (std::getline(std::cin, line)) {
         if (line == "uci") {
             std::cout << "id name Minerva-Classic\n";
-            std::cout << "id author Mihnea\n";
+            std::cout << "id author Mihnea-Teodor Stoica\n";
             // Optionally: declare "Hash" here and wire to tt_.resize().
             std::cout << "uciok\n" << std::flush;
         } else if (line == "isready") {
