@@ -267,7 +267,9 @@ class UCIEngine:
                     best = parts[1]
                 break
 
-        return best or "0000", info
+        best = best or "0000"
+        self.sync()
+        return best, info
 
 # -----------------------------------------------
 # View / rendering helpers
@@ -572,7 +574,7 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
 # -----------------------------------------------
 # Loops
 # -----------------------------------------------
-def loop_human(surface: pygame.Surface, eng_w: UCIEngine, eng_b: UCIEngine, human_white: bool, think_ms: int):
+def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think_ms: int):
     images_cache = PieceImages(ASSETS_DIR)
     view = View(surface.get_width(), surface.get_height(), BASE_BOARD_MARGIN, not human_white)
     board = chess.Board()
@@ -605,19 +607,15 @@ def loop_human(surface: pygame.Surface, eng_w: UCIEngine, eng_b: UCIEngine, huma
                   (16, 12))
         pygame.display.flip()
 
-    eng_w.new_game(); eng_b.new_game()
+    eng.new_game()
     redraw()
 
     think_thread: threading.Thread | None = None
     pending_move: dict[str, str | None] = {"bm": None}
 
-    def engine_for_turn() -> UCIEngine:
-        return eng_w if board.turn == chess.WHITE else eng_b
-
     def start_engine_think():
-        e = engine_for_turn()
         def _run():
-            bm, _ = e.prepare_and_go(board, think_ms)
+            bm, _ = eng.prepare_and_go(board, think_ms)
             pending_move["bm"] = bm
         t = threading.Thread(target=_run, daemon=True)
         t.start(); return t
@@ -644,10 +642,9 @@ def loop_human(surface: pygame.Surface, eng_w: UCIEngine, eng_b: UCIEngine, huma
                 ok = bool(p and p.color == board.turn)
             if not ok:
                 # retry once
-                e = engine_for_turn()
                 print("Engine returned illegal or stale move:", bm, "— hard reset + retry")
-                e.restart()
-                bm2, _ = e.prepare_and_go(board, think_ms)
+                eng.restart()
+                bm2, _ = eng.prepare_and_go(board, think_ms)
                 mv = normalize_engine_move(board, bm2 or "")
                 ok = mv is not None and (mv in board.legal_moves)
                 if ok:
@@ -679,7 +676,7 @@ def loop_human(surface: pygame.Surface, eng_w: UCIEngine, eng_b: UCIEngine, huma
                 elif ev.key == pygame.K_n:
                     board.reset()
                     last_move = None; selected = None; premove = None
-                    eng_w.new_game(); eng_b.new_game()
+                    eng.new_game()
                     redraw()
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 if ev.button == 1:  # LMB
@@ -751,7 +748,7 @@ def loop_human(surface: pygame.Surface, eng_w: UCIEngine, eng_b: UCIEngine, huma
     headers["Result"] = res
     save_pgn(board, headers)
 
-def loop_engine_vs_engine(surface: pygame.Surface, eng_w: UCIEngine, eng_b: UCIEngine, think_ms: int):
+def loop_engine_vs_engine(surface: pygame.Surface, eng: UCIEngine, think_ms: int):
     images_cache = PieceImages(ASSETS_DIR)
     view = View(surface.get_width(), surface.get_height(), BASE_BOARD_MARGIN, False)
     board = chess.Board()
@@ -777,7 +774,7 @@ def loop_engine_vs_engine(surface: pygame.Surface, eng_w: UCIEngine, eng_b: UCIE
         draw_text(surface, f"{'White' if board.turn == chess.WHITE else 'Black'} to move", (16, 12))
         pygame.display.flip()
 
-    eng_w.new_game(); eng_b.new_game()
+    eng.new_game()
     redraw()
 
     running = True
@@ -790,7 +787,6 @@ def loop_engine_vs_engine(surface: pygame.Surface, eng_w: UCIEngine, eng_b: UCIE
                 if ev.key == pygame.K_ESCAPE: running = False
                 elif ev.key == pygame.K_f: view.flipped = not view.flipped; redraw()
 
-        eng = eng_w if board.turn == chess.WHITE else eng_b
         bm, _ = eng.prepare_and_go(board, think_ms)
         mv = normalize_engine_move(board, bm)
 
@@ -847,21 +843,17 @@ def main():
     if cfg is None:
         pygame.quit(); return
 
-    # Two engine processes always
-    eng_w = UCIEngine(ENGINE_EXE, "White")
-    eng_b = UCIEngine(ENGINE_EXE, "Black")
-    eng_w.set_option("Threads", cfg.threads)
-    eng_b.set_option("Threads", cfg.threads)
-    eng_w.start(); eng_b.start()
+    eng = UCIEngine(ENGINE_EXE, "Minerva")
+    eng.set_option("Threads", cfg.threads)
+    eng.start()
 
     try:
         if cfg.human_vs_engine:
-            loop_human(surface, eng_w, eng_b, cfg.human_white, cfg.think_ms)
+            loop_human(surface, eng, cfg.human_white, cfg.think_ms)
         else:
-            loop_engine_vs_engine(surface, eng_w, eng_b, cfg.think_ms)
+            loop_engine_vs_engine(surface, eng, cfg.think_ms)
     finally:
-        eng_w.stop()
-        eng_b.stop()
+        eng.stop()
         pygame.quit()
 
 if __name__ == "__main__":

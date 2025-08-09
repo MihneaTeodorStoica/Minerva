@@ -7,8 +7,14 @@
 
 using namespace chess;
 
-UciDriver::UciDriver() : search_(/*TT MB*/64) {
-    search_.setStopFlag(&stopFlag_);
+UciDriver::UciDriver() {
+    searchers_.emplace_back(std::make_unique<Search>());
+    searchers_[0]->setStopFlag(&stopFlag_);
+}
+
+UciDriver::~UciDriver() {
+    stopFlag_.store(true);
+    if (worker_.joinable()) worker_.join();
 }
 
 std::string UciDriver::move_to_uci(const Move& m) {
@@ -55,12 +61,10 @@ Move UciDriver::uci_to_move(const Board& b, const std::string& u) {
 }
 
 void UciDriver::cmd_position(const std::string& line) {
-    // cancel search
-    if (searching_.load()) {
-        stopFlag_.store(true);
-        if (worker_.joinable()) worker_.join();
-        searching_.store(false);
-    }
+    // cancel any running search and join worker thread
+    stopFlag_.store(true);
+    if (worker_.joinable()) worker_.join();
+    searching_.store(false);
     auto trim = [](std::string s){
         while(!s.empty() && s.front()==' ') s.erase(s.begin());
         while(!s.empty() && s.back()==' ')  s.pop_back();
@@ -150,29 +154,31 @@ SearchLimits UciDriver::parseLimits(const std::string& line) const {
 }
 
 void UciDriver::cmd_go(const std::string& line) {
-    if (searching_.load()) {
-        stopFlag_.store(true);
-        if (worker_.joinable()) worker_.join();
-        searching_.store(false);
-    }
+    // ensure previous search thread finished
+    stopFlag_.store(true);
+    if (worker_.joinable()) worker_.join();
+    searching_.store(false);
     SearchLimits lim = parseLimits(line);
     stopFlag_.store(false);
     searching_.store(true);
 
-    // Fire worker
-    worker_ = std::thread([this, lim](){
-        std::vector<std::unique_ptr<Search>> searchers;
-        std::vector<SearchResult> results(threads_);
-        searchers.reserve(threads_);
-        for (int i = 0; i < threads_; ++i) {
-            searchers.emplace_back(std::make_unique<Search>());
-            searchers.back()->setStopFlag(&stopFlag_);
+    // Ensure we have enough persistent searchers
+    if ((int)searchers_.size() < threads_) {
+        while ((int)searchers_.size() < threads_) {
+            searchers_.emplace_back(std::make_unique<Search>());
+            searchers_.back()->setStopFlag(&stopFlag_);
         }
+    } else if ((int)searchers_.size() > threads_) {
+        searchers_.resize(threads_);
+    }
 
+    // Fire worker
+    worker_ = std::thread([this, lim]() {
+        std::vector<SearchResult> results(threads_);
         std::vector<std::thread> ths;
         for (int i = 0; i < threads_; ++i) {
             ths.emplace_back([&, i]() {
-                results[i] = searchers[i]->go(board_, lim);
+                results[i] = searchers_[i]->go(board_, lim);
             });
         }
         for (auto& t : ths) t.join();
@@ -188,7 +194,6 @@ void UciDriver::cmd_go(const std::string& line) {
         std::cout << "bestmove " << bm << "\n" << std::flush;
         searching_.store(false);
     });
-    worker_.detach();
 }
 
 int UciDriver::loop() {
@@ -205,7 +210,7 @@ int UciDriver::loop() {
         } else if (line == "isready") {
             std::cout << "readyok\n" << std::flush;
         } else if (line == "ucinewgame") {
-            search_.newGame();
+            for (auto& s : searchers_) s->newGame();
         } else if (line.rfind("setoption",0)==0) {
             std::istringstream ss(line);
             std::string token, name, value;
@@ -220,6 +225,14 @@ int UciDriver::loop() {
                 int t = 1;
                 try { t = std::stoi(value); } catch (...) { t = 1; }
                 threads_ = std::max(1, t);
+                if ((int)searchers_.size() < threads_) {
+                    while ((int)searchers_.size() < threads_) {
+                        searchers_.emplace_back(std::make_unique<Search>());
+                        searchers_.back()->setStopFlag(&stopFlag_);
+                    }
+                } else if ((int)searchers_.size() > threads_) {
+                    searchers_.resize(threads_);
+                }
             }
             // For future: parse other setoption like "Hash".
         } else if (line.rfind("position",0)==0) {
