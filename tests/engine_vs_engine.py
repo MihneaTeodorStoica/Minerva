@@ -1,6 +1,8 @@
 import subprocess
 import chess
+import chess.pgn
 from pathlib import Path
+from datetime import datetime
 
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / 'build' / 'minerva'
@@ -43,16 +45,35 @@ def play_self_game(plies=6):
     eng = Engine(ENGINE)
     board = chess.Board()
     moves = []
-    for _ in range(plies):
-        bm = eng.bestmove(moves, think_ms=50)
-        assert bm != '0000'
-        move = chess.Move.from_uci(bm)
-        assert move in board.legal_moves
-        board.push(move)
-        moves.append(bm)
-    eng.quit()
+    try:
+        for _ in range(plies):
+            bm = eng.bestmove(moves, think_ms=50)
+            assert bm != '0000'
+            move = chess.Move.from_uci(bm)
+            assert move in board.legal_moves
+            board.push(move)
+            moves.append(bm)
+    finally:
+        eng.quit()
     return board
+
+def write_pgn(board: chess.Board, path: Path = Path("selfplay.pgn")) -> Path:
+    game = chess.pgn.Game.from_board(board)
+    game.headers["Event"] = "Minerva Self-Play Test"
+    game.headers["Site"] = "Local"
+    game.headers["Date"] = datetime.now().strftime("%Y.%m.%d")
+    game.headers["Round"] = "1"
+    game.headers["White"] = "Minerva"
+    game.headers["Black"] = "Minerva"
+    game.headers["Result"] = board.result()  # "*" if unfinished
+
+    with open(path, "w", encoding="utf-8") as f:
+        exporter = chess.pgn.FileExporter(f)
+        game.accept(exporter)
+    return path
 
 if __name__ == '__main__':
     final_board = play_self_game()
+    out = write_pgn(final_board, Path("selfplay.pgn"))
     print('Final FEN:', final_board.fen())
+    print('PGN written to:', out)
