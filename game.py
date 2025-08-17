@@ -230,13 +230,11 @@ class UCIEngine:
         self.drain()
 
         # set position + go
-        # Some UCI engines only understand the first four fields of a FEN
-        # string (piece placement, side to move, castling rights and
-        # en-passant square).  python-chess' ``Board.fen()`` includes the
-        # halfmove clock and fullmove number which can confuse such parsers
-        # and result in an "0000" move.  Strip those counters to keep the
-        # engine in sync with the GUI.
-        fen = " ".join(board.fen().split()[:4])
+        # Use ``shredder_fen()`` to omit the halfmove clock and fullmove
+        # number from the FEN sent to the engine.  Some UCI engines only
+        # parse the first four FEN fields and may respond with the bogus
+        # move ``0000`` if the additional counters are present.
+        fen = board.shredder_fen()
         self._send(f"position fen {fen}")
         self._send(f"go movetime {movetime_ms}")
 
