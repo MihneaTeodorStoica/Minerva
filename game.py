@@ -230,7 +230,14 @@ class UCIEngine:
         self.drain()
 
         # set position + go
-        self._send(f"position fen {board.fen()}")
+        # Some UCI engines only understand the first four fields of a FEN
+        # string (piece placement, side to move, castling rights and
+        # en-passant square).  python-chess' ``Board.fen()`` includes the
+        # halfmove clock and fullmove number which can confuse such parsers
+        # and result in an "0000" move.  Strip those counters to keep the
+        # engine in sync with the GUI.
+        fen = " ".join(board.fen().split()[:4])
+        self._send(f"position fen {fen}")
         self._send(f"go movetime {movetime_ms}")
 
         info: list[str] = []
