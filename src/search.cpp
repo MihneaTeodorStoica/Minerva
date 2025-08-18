@@ -60,6 +60,7 @@ int Search::qsearch(Board& b, int alpha, int beta, int ply) {
         }
         int best = -::utils::INF;
         for (const auto& m : evs) {
+            if (timeUp()) break;
             b.makeMove(m);
             int sc = -qsearch(b, -beta, -alpha, ply + 1);
             b.unmakeMove(m);
@@ -89,6 +90,7 @@ int Search::qsearch(Board& b, int alpha, int beta, int ply) {
 
     int best = stand;
     for (const auto& m : caps) {
+        if (timeUp()) break;
         // Futility-like pruning for obviously bad captures could be added here.
         b.makeMove(m);
         int sc = -qsearch(b, -beta, -alpha, ply + 1);
@@ -160,6 +162,7 @@ int Search::negamax(Board& b, int depth, int alpha, int beta, int ply) {
     int movesSearched = 0;
 
     for (const auto& m : ml) {
+        if (timeUp()) break;
         b.makeMove(m);
         // Late-move reduction (super light)
         int subDepth = depth - 1;
