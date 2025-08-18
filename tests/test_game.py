@@ -52,3 +52,12 @@ def test_prepare_and_go_depth_sends_depth_command():
     best, _ = eng.prepare_and_go_depth(board, 3)
     assert best == "e2e4"
     assert "go depth 3" in eng.sent
+
+
+def test_prepare_and_go_with_max_depth():
+    eng = DummyEngine()
+    board = chess.Board()
+    eng.q.put("bestmove e2e4")
+    best, _ = eng.prepare_and_go(board, 1000, max_depth=2)
+    assert best == "e2e4"
+    assert "go movetime 1000 depth 2" in eng.sent
