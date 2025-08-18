@@ -47,6 +47,7 @@ START_WINDOW = (1000, 760)      # resizable
 BASE_BOARD_MARGIN = 24
 TARGET_FPS = 60
 DEFAULT_THINK_MS = 300
+DEFAULT_DEPTH = 4
 
 # lichess-ish colors
 COL_LIGHT = (240, 217, 181)
@@ -255,6 +256,57 @@ class UCIEngine:
                 try: self._send("stop")
                 except Exception: pass
                 sent_stop = True
+                deadline = time.time() + 1.0
+                remaining = deadline - time.time()
+
+            try:
+                line = self.q.get(timeout=max(0.01, min(0.2, remaining)))
+            except queue.Empty:
+                if time.time() > deadline:
+                    break
+                continue
+
+            if line.startswith("info "):
+                info.append(line)
+            elif line.startswith("bestmove"):
+                parts = line.split()
+                if len(parts) >= 2:
+                    best = parts[1]
+                break
+
+        best = best or "0000"
+        self.sync()
+        return best, info
+
+    def prepare_and_go_depth(self, board: chess.Board, depth: int) -> tuple[str, list[str]]:
+        """Same as ``prepare_and_go`` but limits search by depth."""
+        if not self.is_alive():
+            print(f"[{self.name}] engine not alive — restarting")
+            self.restart()
+
+        self.drain()
+        self._send("isready")
+        self._wait_for("readyok", 5.0)
+        self.drain()
+
+        fen = board.shredder_fen()
+        self._send(f"position fen {fen}")
+        self._send(f"go depth {depth}")
+
+        info: list[str] = []
+        best: str | None = None
+        deadline = time.time() + 30.0
+
+        while True:
+            if not self.is_alive():
+                print(f"[{self.name}] crashed during search — restarting")
+                self.restart()
+                break
+
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                try: self._send("stop")
+                except Exception: pass
                 deadline = time.time() + 1.0
                 remaining = deadline - time.time()
 
@@ -570,6 +622,7 @@ class GameConfig:
     human_vs_engine: bool
     human_white: bool
     think_ms: int
+    depth: int
     threads: int
 
 @dataclass
@@ -598,6 +651,7 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
     human_vs_engine = True
     human_white = True
     think_ms = DEFAULT_THINK_MS
+    depth = DEFAULT_DEPTH
     threads = max(1, os.cpu_count() or 1)
     while running:
         surface.fill(COL_PANEL_BG)
@@ -617,7 +671,10 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
         draw_text(surface, "White", (r3.x + 10, r3.y + 9))
         draw_text(surface, "Black", (r4.x + 10, r4.y + 9))
         y += 60
-        draw_text(surface, f"Engine movetime: {think_ms} ms  (Left/Right to adjust)", (bx, y), 20)
+        if human_vs_engine:
+            draw_text(surface, f"Engine movetime: {think_ms} ms  (Left/Right to adjust)", (bx, y), 20)
+        else:
+            draw_text(surface, f"Engine depth: {depth}  (Left/Right to adjust)", (bx, y), 20)
         y += 40
         draw_text(surface, f"Engine threads: {threads}  (Up/Down to adjust)", (bx, y), 20)
         y += 40
@@ -628,8 +685,17 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
             if ev.type == pygame.QUIT: return None
             if ev.type == pygame.KEYDOWN:
                 if ev.key == pygame.K_ESCAPE: return None
-                if ev.key == pygame.K_LEFT:  think_ms = int(max(50, think_ms - 50))
-                if ev.key == pygame.K_RIGHT: think_ms = int(min(5000, think_ms + 50))
+                if ev.key == pygame.K_LEFT:
+                    if human_vs_engine:
+                        think_ms = int(max(50, think_ms - 50))
+                        
+                    else:
+                        depth = int(max(1, depth - 1))
+                if ev.key == pygame.K_RIGHT:
+                    if human_vs_engine:
+                        think_ms = int(min(5000, think_ms + 50))
+                    else:
+                        depth = int(min(20, depth + 1))
                 if ev.key == pygame.K_UP:    threads = int(clamp(threads + 1, 1, 64))
                 if ev.key == pygame.K_DOWN:  threads = int(clamp(threads - 1, 1, 64))
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
@@ -638,7 +704,7 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
                 elif r2.collidepoint(mx, my): human_vs_engine = False
                 elif r3.collidepoint(mx, my): human_white = True
                 elif r4.collidepoint(mx, my): human_white = False
-                elif rs.collidepoint(mx, my): return GameConfig(human_vs_engine, human_white, think_ms, threads)
+                elif rs.collidepoint(mx, my): return GameConfig(human_vs_engine, human_white, think_ms, depth, threads)
 
         pygame.display.flip()
         clock.tick(TARGET_FPS)
@@ -881,7 +947,7 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
     headers["Result"] = res
     save_pgn(board, headers)
 
-def loop_engine_vs_engine(surface: pygame.Surface, eng: UCIEngine, think_ms: int):
+def loop_engine_vs_engine(surface: pygame.Surface, eng: UCIEngine, depth: int):
     images_cache = PieceImages(ASSETS_DIR)
     view = View(surface.get_width(), surface.get_height(), BASE_BOARD_MARGIN, False)
     board = chess.Board()
@@ -926,7 +992,7 @@ def loop_engine_vs_engine(surface: pygame.Surface, eng: UCIEngine, think_ms: int
                 if ev.key == pygame.K_ESCAPE: running = False
                 elif ev.key == pygame.K_f: view.flipped = not view.flipped; redraw()
 
-        bm, info = eng.prepare_and_go(board, think_ms)
+        bm, info = eng.prepare_and_go_depth(board, depth)
         cp = parse_score(info)
         if cp is not None:
             last_eval = cp if board.turn == chess.WHITE else -cp
@@ -940,7 +1006,7 @@ def loop_engine_vs_engine(surface: pygame.Surface, eng: UCIEngine, think_ms: int
         if not ok:
             print("Engine returned illegal or stale move:", bm, "— hard reset + retry")
             eng.restart()
-            bm2, _ = eng.prepare_and_go(board, think_ms)
+            bm2, _ = eng.prepare_and_go_depth(board, depth)
             mv = normalize_engine_move(board, bm2)
             ok = mv is not None and (mv in board.legal_moves)
             if ok:
@@ -1005,7 +1071,7 @@ def main():
         if cfg.human_vs_engine:
             loop_human(surface, eng, cfg.human_white, cfg.think_ms)
         else:
-            loop_engine_vs_engine(surface, eng, cfg.think_ms)
+            loop_engine_vs_engine(surface, eng, cfg.depth)
     finally:
         eng.stop()
         pygame.quit()
