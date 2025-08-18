@@ -211,13 +211,14 @@ class UCIEngine:
         self.drain()
 
     # ---- one search (robust)
-    def prepare_and_go(self, board: chess.Board, movetime_ms: int) -> tuple[str, list[str]]:
+    def prepare_and_go(self, board: chess.Board, movetime_ms: int, max_depth: int | None = None) -> tuple[str, list[str]]:
         """
         Robust per-move search:
           - auto-restart if the engine died
           - drain + isready before search
-          - position fen …; go movetime …
+          - position fen …; go movetime … [depth …]
           - deadline + stop
+        ``max_depth`` optionally limits the search depth in addition to movetime.
         """
         # ensure process
         if not self.is_alive():
@@ -237,7 +238,10 @@ class UCIEngine:
         # move ``0000`` if the additional counters are present.
         fen = board.shredder_fen()
         self._send(f"position fen {fen}")
-        self._send(f"go movetime {movetime_ms}")
+        if max_depth is not None:
+            self._send(f"go movetime {movetime_ms} depth {max_depth}")
+        else:
+            self._send(f"go movetime {movetime_ms}")
 
         info: list[str] = []
         best: str | None = None
@@ -673,10 +677,12 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
         y += 60
         if human_vs_engine:
             draw_text(surface, f"Engine movetime: {think_ms} ms  (Left/Right to adjust)", (bx, y), 20)
+            y += 40
+            draw_text(surface, f"Max depth: {depth}  (Up/Down to adjust)", (bx, y), 20)
         else:
             draw_text(surface, f"Engine depth: {depth}  (Left/Right to adjust)", (bx, y), 20)
         y += 40
-        draw_text(surface, f"Engine threads: {threads}  (Up/Down to adjust)", (bx, y), 20)
+        draw_text(surface, f"Engine threads: {threads}  (PgUp/PgDn to adjust)", (bx, y), 20)
         y += 40
         rs = pygame.Rect(bx, y, 200, 44)
         draw_button(surface, rs, "Start", False)
@@ -688,7 +694,6 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
                 if ev.key == pygame.K_LEFT:
                     if human_vs_engine:
                         think_ms = int(max(50, think_ms - 50))
-                        
                     else:
                         depth = int(max(1, depth - 1))
                 if ev.key == pygame.K_RIGHT:
@@ -696,8 +701,14 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
                         think_ms = int(min(5000, think_ms + 50))
                     else:
                         depth = int(min(20, depth + 1))
-                if ev.key == pygame.K_UP:    threads = int(clamp(threads + 1, 1, 64))
-                if ev.key == pygame.K_DOWN:  threads = int(clamp(threads - 1, 1, 64))
+                if ev.key == pygame.K_UP:
+                    depth = int(min(20, depth + 1))
+                if ev.key == pygame.K_DOWN:
+                    depth = int(max(1, depth - 1))
+                if ev.key == pygame.K_PAGEUP:
+                    threads = int(clamp(threads + 1, 1, 64))
+                if ev.key == pygame.K_PAGEDOWN:
+                    threads = int(clamp(threads - 1, 1, 64))
             if ev.type == pygame.MOUSEBUTTONDOWN and ev.button == 1:
                 mx, my = ev.pos
                 if r1.collidepoint(mx, my): human_vs_engine = True
@@ -712,7 +723,7 @@ def menu(surface: pygame.Surface) -> GameConfig | None:
 # -----------------------------------------------
 # Loops
 # -----------------------------------------------
-def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think_ms: int):
+def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think_ms: int, depth: int):
     images_cache = PieceImages(ASSETS_DIR)
     view = View(surface.get_width(), surface.get_height(), BASE_BOARD_MARGIN, not human_white)
     board = chess.Board()
@@ -759,7 +770,7 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
 
     def start_engine_think():
         def _run():
-            bm, info = eng.prepare_and_go(board, think_ms)
+            bm, info = eng.prepare_and_go(board, think_ms, depth)
             pending_move["bm"] = bm
             pending_move["eval"] = parse_score(info)
         t = threading.Thread(target=_run, daemon=True)
@@ -794,7 +805,7 @@ def loop_human(surface: pygame.Surface, eng: UCIEngine, human_white: bool, think
                 # retry once
                 print("Engine returned illegal or stale move:", bm, "— hard reset + retry")
                 eng.restart()
-                bm2, _ = eng.prepare_and_go(board, think_ms)
+                bm2, _ = eng.prepare_and_go(board, think_ms, depth)
                 mv = normalize_engine_move(board, bm2 or "")
                 ok = mv is not None and (mv in board.legal_moves)
                 if ok:
@@ -1069,7 +1080,7 @@ def main():
 
     try:
         if cfg.human_vs_engine:
-            loop_human(surface, eng, cfg.human_white, cfg.think_ms)
+            loop_human(surface, eng, cfg.human_white, cfg.think_ms, cfg.depth)
         else:
             loop_engine_vs_engine(surface, eng, cfg.depth)
     finally:
