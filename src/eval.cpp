@@ -427,6 +427,30 @@ int evaluate(const Board& b) {
     mg += 4 * (mobW - mobB);
     eg += 2 * (mobW - mobB);
 
+    // Center control: bonus for attacking the four central squares
+    const uint64_t CENTER = (1ULL << 27) | (1ULL << 28) | (1ULL << 35) | (1ULL << 36);
+    auto count_center = [&](Color c) {
+        int total = 0;
+        uint64_t pieces;
+        pieces = b.pieces(PieceType::PAWN, c).getBits();
+        while (pieces) { int sq = __builtin_ctzll(pieces); total += __builtin_popcountll(attacks::pawn(c, Square(sq)).getBits() & CENTER); pieces &= pieces-1; }
+        pieces = b.pieces(PieceType::KNIGHT, c).getBits();
+        while (pieces) { int sq = __builtin_ctzll(pieces); total += __builtin_popcountll(attacks::knight(Square(sq)).getBits() & CENTER); pieces &= pieces-1; }
+        pieces = b.pieces(PieceType::BISHOP, c).getBits();
+        while (pieces) { int sq = __builtin_ctzll(pieces); total += __builtin_popcountll(attacks::bishop(Square(sq), occ).getBits() & CENTER); pieces &= pieces-1; }
+        pieces = b.pieces(PieceType::ROOK, c).getBits();
+        while (pieces) { int sq = __builtin_ctzll(pieces); total += __builtin_popcountll(attacks::rook(Square(sq), occ).getBits() & CENTER); pieces &= pieces-1; }
+        pieces = b.pieces(PieceType::QUEEN, c).getBits();
+        while (pieces) { int sq = __builtin_ctzll(pieces); total += __builtin_popcountll(attacks::queen(Square(sq), occ).getBits() & CENTER); pieces &= pieces-1; }
+        pieces = b.pieces(PieceType::KING, c).getBits();
+        while (pieces) { int sq = __builtin_ctzll(pieces); total += __builtin_popcountll(attacks::king(Square(sq)).getBits() & CENTER); pieces &= pieces-1; }
+        return total;
+    };
+    int centerW = count_center(Color::WHITE);
+    int centerB = count_center(Color::BLACK);
+    mg += 4 * (centerW - centerB);
+    eg += 2 * (centerW - centerB);
+
     // Tempo (small)
     int tempo = (b.sideToMove() == Color::WHITE) ? 8 : -8;
 
