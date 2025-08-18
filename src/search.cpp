@@ -7,6 +7,15 @@
 
 using namespace chess;
 
+namespace {
+// Returns true if move m delivers immediate checkmate
+bool givesMate(Board b, const Move& m) {
+    b.makeMove(m);
+    Movelist replies; movegen::legalmoves(replies, b);
+    return replies.empty() && b.inCheck();
+}
+}
+
 Search::Search(size_t ttMB) : tt_(ttMB) {
     history_.clear();
     killers_.clear();
@@ -28,10 +37,11 @@ bool Search::timeUp() const {
 
 void Search::orderMoves(const Board& b, Movelist& ml, Move ttMove, int ply) {
     auto scoreOf = [&](const Move& m){
-        if (m == ttMove) return 30000000;
-        if (b.isCapture(m)) return 20000000 + mvv_lva(b, m);
-        if (killers_.is_killer(ply, m)) return 15000000;
-        return 10000000 + history_.score(m);
+        if (m == ttMove) return 40000000;
+        if (givesMate(b, m)) return 35000000;
+        if (b.isCapture(m)) return 30000000 + mvv_lva(b, m);
+        if (killers_.is_killer(ply, m)) return 25000000;
+        return 20000000 + history_.score(m);
     };
     std::sort(ml.begin(), ml.end(), [&](const Move& a, const Move& c){
         return scoreOf(a) > scoreOf(c);
@@ -156,8 +166,21 @@ int Search::negamax(Board& b, int depth, int alpha, int beta, int ply) {
         if (subDepth > 0 && movesSearched >= 4 && !b.isCapture(m) && m.typeOf()!=Move::PROMOTION) {
             subDepth -= 1;
         }
-        int sc = -negamax(b, subDepth, -beta, -alpha, ply + 1);
+        int sc;
+        if (movesSearched == 0) {
+            sc = -negamax(b, subDepth, -beta, -alpha, ply + 1);
+        } else {
+            sc = -negamax(b, subDepth, -alpha - 1, -alpha, ply + 1);
+            if (sc > alpha) {
+                sc = -negamax(b, subDepth, -beta, -alpha, ply + 1);
+            }
+        }
         b.unmakeMove(m);
+
+        if (::utils::is_mate_score(sc)) {
+            history_.bonus(m, 4000);
+            killers_.push(ply, m);
+        }
 
         movesSearched++;
 
