@@ -18,6 +18,7 @@ UciDriver::~UciDriver() {
 }
 
 std::string UciDriver::move_to_uci(const Move& m) {
+    if (m == Move::NO_MOVE) return "";
     std::string s;
     auto f = m.from(), t = m.to();
     s += char('a' + f.file()); s += char('1' + f.rank());
@@ -190,8 +191,13 @@ void UciDriver::cmd_go(const std::string& line) {
         }
 
         Movelist legal; movegen::legalmoves(legal, board_);
-        if (best.best == Move::NO_MOVE && !legal.empty()) {
-            best.best = legal.front();
+        bool found = false;
+        for (const auto& m : legal) {
+            if (m.move() == best.best.move()) { found = true; break; }
+        }
+        if (!found) {
+            if (!legal.empty()) best.best = legal.front();
+            else best.best = Move::NO_MOVE;
         }
 
         std::string bm = move_to_uci(best.best);
