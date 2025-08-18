@@ -260,11 +260,13 @@ SearchResult Search::go(const Board& root, const SearchLimits& lim) {
             Board pos = root;
             score = negamax(pos, d, alpha, beta, 0);
         }
-        if (timeUp()) break;
 
-        // Extract PV from TT
+        bool interrupted = timeUp();
+
+        // Extract PV from TT regardless of interruption so we keep the best
         auto pv = extractPV(root);
         if (!pv.empty()) best = pv.front();
+        if (interrupted) break;
 
         bestScore = score;
         prevScore = score;
