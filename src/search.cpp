@@ -8,6 +8,9 @@
 using namespace chess;
 
 namespace {
+// Piece values used for delta pruning
+constexpr int VALS[7] = {100, 320, 330, 500, 900, 20000, 0};
+
 // Returns true if move m delivers immediate checkmate
 bool givesMate(Board b, const Move& m) {
     b.makeMove(m);
@@ -91,7 +94,21 @@ int Search::qsearch(Board& b, int alpha, int beta, int ply) {
     int best = stand;
     for (const auto& m : caps) {
         if (timeUp()) break;
-        // Futility-like pruning for obviously bad captures could be added here.
+        // Delta pruning: skip captures/promotions that can't raise alpha
+        int gain = 0;
+        if (b.isCapture(m)) {
+            if (m.typeOf() == Move::ENPASSANT) {
+                auto capSq = m.to().ep_square();
+                gain += VALS[(int)b.at(capSq).type()];
+            } else {
+                gain += VALS[(int)b.at(m.to()).type()];
+            }
+        }
+        if (m.typeOf() == Move::PROMOTION) {
+            gain += VALS[(int)m.promotionType()] - VALS[(int)PieceType::PAWN];
+        }
+        if (stand + gain + 50 < alpha) continue;
+
         b.makeMove(m);
         int sc = -qsearch(b, -beta, -alpha, ply + 1);
         b.unmakeMove(m);
