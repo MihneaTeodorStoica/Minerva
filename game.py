@@ -45,9 +45,9 @@ if not ENGINE_EXE.exists():
 # Wider default window so side panel fits
 START_WINDOW = (1000, 760)      # resizable
 BASE_BOARD_MARGIN = 24
-TARGET_FPS = 60
-DEFAULT_THINK_MS = 300
-DEFAULT_DEPTH = 4
+TARGET_FPS = 240
+DEFAULT_THINK_MS = 1000
+DEFAULT_DEPTH = 20
 
 # lichess-ish colors
 COL_LIGHT = (240, 217, 181)
